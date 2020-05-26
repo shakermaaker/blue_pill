@@ -17,6 +17,6 @@ void DF_Pause (void);
 void DF_Previous (void);
 void DF_Playback (void);
 
-void Check_Key (void);
+//void Check_Key (void);
 
 #endif /* INC_DFPLAYER_MINI_H_ */
