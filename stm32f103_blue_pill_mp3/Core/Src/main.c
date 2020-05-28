@@ -23,7 +23,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "DFPLAYER_MINI.h"
+#include "stdio.h"
+#include "string.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -41,6 +42,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+TIM_HandleTypeDef htim1;
+
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 
@@ -53,12 +56,38 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART3_UART_Init(void);
+static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+//=====================FOR TRANSFER PRINTF TO UART=======================
+int _write(int fd, char *ptr, int len) {
+  HAL_UART_Transmit(&huart3, (uint8_t*) ptr, len, 0xFFFF);
+
+  return len;
+}
+int _read(int fd, char *ptr, int len) {
+
+  *ptr = 0x00; // Flush the character buffer
+
+  HAL_UART_Receive(&huart3, (uint8_t*) ptr, 1, 0xFFFF);
+
+  return 1;
+}
+////http://www.count-zero.ru/2016/stm32_uart/
+//=====================END TRANSFER PRINTF TO UART=======================
+
+// В колбеке мигаем светиком:
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+  if (htim->Instance == TIM1) //прерывание от TIM1
+  {
+    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -92,17 +121,24 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
-  DF_Init(10);
-  DF_PlayFromStart();
+
+  HAL_TIM_Base_Start_IT(&htim1); //запустим таймер в режиме прерывания:
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+  char uartString[] = "HAL_UART_Transmit test\r\n"; //строка(массив) для отправки в uart
+
   while (1)
   {
-    HAL_Delay(10000);
-    DF_Next();
+
+    HAL_UART_Transmit(&huart3, (uint8_t*) uartString, strlen(uartString), 100);
+    HAL_Delay(1000);
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -145,6 +181,52 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 719;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 49999;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+
 }
 
 /**
