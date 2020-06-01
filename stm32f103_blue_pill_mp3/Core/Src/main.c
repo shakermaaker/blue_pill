@@ -43,6 +43,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
@@ -57,6 +58,7 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -87,6 +89,22 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
   if (htim->Instance == TIM1) //прерывание от TIM1
   {
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+  }
+
+}
+
+// В колбеке генерируем импульсы на пине PA5
+uint32_t count_forHAL_TIM_OC_DelayElapsedCallback;
+void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim) {
+
+  char trans_str[255];
+  if (htim->Instance == TIM2) {
+    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+    //snprintf(trans_str,255, "Compare %lu; counting:%lu\r\n",
+    sprintf(trans_str, "Compare %lu; counting:%lu\r\n",
+        __HAL_TIM_GET_COUNTER(&htim2),
+        count_forHAL_TIM_OC_DelayElapsedCallback++);
+    HAL_UART_Transmit(&huart3, (uint8_t*) trans_str, strlen(trans_str), 1000);
   }
 }
 
@@ -123,9 +141,13 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
   MX_TIM1_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 
   HAL_TIM_Base_Start_IT(&htim1); //запустим таймер в режиме прерывания:
+
+//  HAL_TIM_OC_Start(&htim2, TIM_CHANNEL_1); //запустим таймер 2, не генерирует прерывание
+  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1); //зупуск таймера 2 с генерацией прерывания
 
   /* USER CODE END 2 */
 
@@ -140,10 +162,10 @@ int main(void)
 //    HAL_UART_Transmit(&huart3, (uint8_t*) uartString, strlen(uartString), 100);
 //    HAL_Delay(1000);
 
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-    HAL_Delay(50);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-    HAL_Delay(50);
+//    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+//    HAL_Delay(50);
+//    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+//    HAL_Delay(50);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -210,7 +232,7 @@ static void MX_TIM1_Init(void)
   htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim1.Init.Period = 9;
-  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV4;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
@@ -220,7 +242,7 @@ static void MX_TIM1_Init(void)
   sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_ETRMODE2;
   sClockSourceConfig.ClockPolarity = TIM_CLOCKPOLARITY_NONINVERTED;
   sClockSourceConfig.ClockPrescaler = TIM_CLOCKPRESCALER_DIV1;
-  sClockSourceConfig.ClockFilter = 15;
+  sClockSourceConfig.ClockFilter = 0;
   if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
   {
     Error_Handler();
@@ -234,6 +256,54 @@ static void MX_TIM1_Init(void)
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 7199;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 499;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_OC_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_TOGGLE;
+  sConfigOC.Pulse = 10;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_LOW;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
 
 }
 
