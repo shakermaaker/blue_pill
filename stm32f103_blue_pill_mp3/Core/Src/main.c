@@ -42,8 +42,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-TIM_HandleTypeDef htim1;
-TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
@@ -57,8 +56,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART3_UART_Init(void);
-static void MX_TIM1_Init(void);
-static void MX_TIM2_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -83,30 +81,6 @@ int _read(int fd, char *ptr, int len) {
 ////http://www.count-zero.ru/2016/stm32_uart/
 //=====================END TRANSFER PRINTF TO UART=======================
 
-// В колбеке мигаем светиком:
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-//void HAL_TIM_TriggerCallback(TIM_HandleTypeDef *htim) {
-  if (htim->Instance == TIM1) //прерывание от TIM1
-  {
-    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-  }
-
-}
-
-// В колбеке генерируем импульсы на пине PA5
-uint32_t count_forHAL_TIM_OC_DelayElapsedCallback;
-void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim) {
-
-  char trans_str[255];
-  if (htim->Instance == TIM2) {
-    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-    //snprintf(trans_str,255, "Compare %lu; counting:%lu\r\n",
-    sprintf(trans_str, "Compare %lu; counting:%lu\r\n",
-        __HAL_TIM_GET_COUNTER(&htim2),
-        count_forHAL_TIM_OC_DelayElapsedCallback++);
-    HAL_UART_Transmit(&huart3, (uint8_t*) trans_str, strlen(trans_str), 1000);
-  }
-}
 
 /* USER CODE END 0 */
 
@@ -140,32 +114,101 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
-  MX_TIM1_Init();
-  MX_TIM2_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-
-  HAL_TIM_Base_Start_IT(&htim1); //запустим таймер в режиме прерывания:
-
-//  HAL_TIM_OC_Start(&htim2, TIM_CHANNEL_1); //запустим таймер 2, не генерирует прерывание
-  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1); //зупуск таймера 2 с генерацией прерывания
-
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  
+  uint16_t i = 0;/*вообще это ужасная практика создание переменных, они должны объявляться
+  как можно ближе к их спользованию, но так как бывают микроконтроллеры с очень маленькой
+  памятью, и ВОЗМОЖНО, чтобы не тратить время на их создание, создают как бы глобальную 
+  переменную(в нашем случае видимость i ограничена областью функции main). 
+  Имена 'i' и 'j' исторически используются в цыклах, но и в цыклах более целесообразно
+  их названия заменять на более понятные имена, чтобы при чтении кода было очень понятно за
+  что она отвечает.
+  Ниже будет два похожих цыкла, в последнем используется i, разница читабельности на лицо*/
+  volatile uint16_t j = 0;
+  char sendingStringByUart[255];
 
-  //char uartString[] = "HAL_UART_Transmit test\r\n"; //строка(массив) для отправки в uart
+  /* вывод в uart значение предделителя системной частоты, значение счетчика периода и 
+   * значение для сравнения с четчиком периода.*/
+  snprintf(sendingStringByUart, 255,
+      "TIM->TIM prescaler register = %lu; "
+      "TIM->TIM auto-reload register = %lu;© "
+      "TIM3->TIM capture/compare register = %lu;\r\n",
+      TIM3->PSC, TIM3->ARR, TIM3->CCR1);
+  HAL_UART_Transmit(&huart3, (uint8_t*) sendingStringByUart, strlen(sendingStringByUart), 1000);
+
+  /*вывод в uart значение системной частоты*/
+  snprintf(sendingStringByUart, 255, "HAL_RCC_GetSysClockFreq () = %lu; \r\n",
+      HAL_RCC_GetSysClockFreq());
+  HAL_UART_Transmit(&huart3, (uint8_t*) sendingStringByUart, strlen(sendingStringByUart), 1000);
+  
+  uint16_t delayForChangingTimersSetting = 5000;/*оспользуется, чтобы создать мигание*/
+  int bool = 0;/*используется как логическая переменная для смены параметров таймера*/
 
   while (1)
   {
+    for (uint16_t compareValue = 0; compareValue <= (TIM3->ARR); compareValue++) { 
+      // сравнение с CounterPeriod(называют еще auto-reload register)
+      /* 
+       * переменной 'i' будем задавать ширину заполнения ШИМ сигнала или можно назвать процент
+       * заполнения, если рассматривать отношение '100% * i/(TIM3->ARR)'.
+       *  ___
+       * |   |___... заполнение 50%, тут 'compareValue'равна половине значения содержащегося 
+       * в регистре CounterPeriod(auto-reload register) compareValue=(TIM3->ARR)/2
+       * 
+       *  _______
+       * |       ... заполнение 100%
+       *
+       * */
+      TIM3->CCR1 = compareValue;
+      
+      for (j = 0; j < delayForChangingTimersSetting; j++)
+        __NOP();
+      /*__NOP(); бездействие, наверно, это плохой способ, так как процессор, наверно, в этот тик
+       * не может выполнять полезную работу, если, к примеру у нас все будет работать во FreeRTOS.
+       * Во FreeRTOS есть для этого свои функции не блокирующие процессор, чтобы заменить этот цикл*/
+    }
 
-//    HAL_UART_Transmit(&huart3, (uint8_t*) uartString, strlen(uartString), 100);
-//    HAL_Delay(1000);
+    snprintf(sendingStringByUart, 255,
+        "TIM->TIM prescaler register = %lu; TIM->TIM auto-reload register = %lu; TIM3->TIM capture/compare register = %lu;\r\n",
+        TIM3->PSC, TIM3->ARR, TIM3->CCR1);
+    HAL_UART_Transmit(&huart3, (uint8_t*) sendingStringByUart, strlen(sendingStringByUart), 1000);
 
-//    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-//    HAL_Delay(50);
-//    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-//    HAL_Delay(50);
+    for (i = TIM3->ARR; i > 0; i--) {
+      TIM3->CCR1 = i;
+      for (j = 0; j < delayForChangingTimersSetting; j++)
+        __NOP();
+    }
+    snprintf(sendingStringByUart, 255,
+        "TIM->TIM prescaler register = %lu; TIM->TIM auto-reload register = %lu; TIM3->TIM capture/compare register = %lu;\r\n",
+        TIM3->PSC, TIM3->ARR, TIM3->CCR1);
+    HAL_UART_Transmit(&huart3, (uint8_t*) sendingStringByUart, strlen(sendingStringByUart), 1000);
+
+
+
+    if (bool) {
+      bool = 0;
+      TIM3->PSC = 7199; /*меняем prescaler таймера*/
+      TIM3->ARR = 999; /*меняем CounterPeriod(называют еще auto-reload register)*/
+      snprintf(sendingStringByUart, 255,
+          "TIM->TIM prescaler register = %lu; TIM->TIM auto-reload register = %lu; TIM3->TIM capture/compare register = %lu;\r\n",
+          TIM3->PSC, TIM3->ARR, TIM3->CCR1);
+      HAL_UART_Transmit(&huart3, (uint8_t*) sendingStringByUart, strlen(sendingStringByUart), 1000);
+    } else {
+      bool = 1;
+      TIM3->PSC = 71; /*меняем prescaler таймера*/
+      TIM3->ARR = 999; /*меняем CounterPeriod(называют еще auto-reload register)*/
+      snprintf(sendingStringByUart, 255,
+          "TIM->TIM prescaler register = %lu; TIM->TIM auto-reload register = %lu; TIM3->TIM capture/compare register = %lu;\r\n",
+          TIM3->PSC, TIM3->ARR, TIM3->CCR1);
+      HAL_UART_Transmit(&huart3, (uint8_t*) sendingStringByUart, strlen(sendingStringByUart), 1000);
+    }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -211,99 +254,61 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief TIM1 Initialization Function
+  * @brief TIM3 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_TIM1_Init(void)
+static void MX_TIM3_Init(void)
 {
 
-  /* USER CODE BEGIN TIM1_Init 0 */
+  /* USER CODE BEGIN TIM3_Init 0 */
 
-  /* USER CODE END TIM1_Init 0 */
+  /* USER CODE END TIM3_Init 0 */
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM1_Init 1 */
-
-  /* USER CODE END TIM1_Init 1 */
-  htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 0;
-  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 9;
-  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim1.Init.RepetitionCounter = 0;
-  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_ETRMODE2;
-  sClockSourceConfig.ClockPolarity = TIM_CLOCKPOLARITY_NONINVERTED;
-  sClockSourceConfig.ClockPrescaler = TIM_CLOCKPRESCALER_DIV1;
-  sClockSourceConfig.ClockFilter = 0;
-  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM1_Init 2 */
-
-  /* USER CODE END TIM1_Init 2 */
-
-}
-
-/**
-  * @brief TIM2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM2_Init(void)
-{
-
-  /* USER CODE BEGIN TIM2_Init 0 */
-
-  /* USER CODE END TIM2_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
 
-  /* USER CODE BEGIN TIM2_Init 1 */
+  /* USER CODE BEGIN TIM3_Init 1 */
 
-  /* USER CODE END TIM2_Init 1 */
-  htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 7199;
-  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 499;
-  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_OC_Init(&htim2) != HAL_OK)
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 71;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 999;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
   {
     Error_Handler();
   }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_TOGGLE;
-  sConfigOC.Pulse = 10;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_LOW;
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 50;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN TIM2_Init 2 */
+  /* USER CODE BEGIN TIM3_Init 2 */
 
-  /* USER CODE END TIM2_Init 2 */
+  /* USER CODE END TIM3_Init 2 */
+  HAL_TIM_MspPostInit(&htim3);
 
 }
 
@@ -389,7 +394,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
